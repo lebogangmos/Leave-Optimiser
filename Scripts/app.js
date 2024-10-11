@@ -1,101 +1,117 @@
-// Base URL for Nager.Date API (no API key required)
-const nagerBaseUrl = 'https://date.nager.at/api/v3/PublicHolidays/2024/AT';
+//API Key
 
-// Fetch holidays for the selected country and year from Nager.Date
-async function fetchHolidaysNager(countryCode, year) {
-    const url = `${nagerBaseUrl}/${year}/${countryCode}`;
-    
-    try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new alert(`HTTP error! status: ${response.status}`);
-        }
-        const holidays = await response.json();
-        return holidays;  // Nager.Date returns an array of holidays
-    } catch (error) {
-        console.error('Error fetching holidays:', error);
-        return [];
+const HOLIDAY_API_URL = 'https://date.nager.at/Api/v3/PublicHolidays/';
+
+async function fetchHolidays(countryCode, year) {
+  const url = `${HOLIDAY_API_URL}${year}/${countryCode}`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error('Failed to fetch holidays');
     }
+    const holidays = await response.json();
+    return holidays;
+  } catch (error) {
+    console.error('Error fetching holidays:', error);
+    return [];
+  }
 }
 
-// Suggest leave days based on holidays and available leave days
-function suggestLeaveDaysWithInput(holidays, leaveDays) {
-    let leaveSuggestions = [];
-    let leaveDaysRemaining = leaveDays;
+function optimizeLeaveDays(holidays, leaveDays) {
+  let optimizedLeave = [];
+  let remainingLeaveDays = leaveDays;
 
-    holidays.forEach(holiday => {
-        let holidayDate = new Date(holiday.date);
+  // Sort holidays by date
+  holidays.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-        if (holidayDate.getDay() === 5) {  // Friday
-            if (leaveDaysRemaining > 0) {
-                leaveSuggestions.push({
-                    leaveDay: new Date(holidayDate.setDate(holidayDate.getDate() - 1)),
-                    reason: `Extend break before ${holiday.localName}`
-                });
-                leaveDaysRemaining--;
-            }
-        } else if (holidayDate.getDay() === 1) {  // Monday
-            if (leaveDaysRemaining > 0) {
-                leaveSuggestions.push({
-                    leaveDay: new Date(holidayDate.setDate(holidayDate.getDate() - 3)),
-                    reason: `Extend break after ${holiday.localName}`
-                });
-                leaveDaysRemaining--;
-            }
-        }
+  // Loop through holidays to suggest the best days for leave
+  holidays.forEach(holiday => {
+    let holidayDate = new Date(holiday.date);
+    let dayBefore = new Date(holidayDate);
+    dayBefore.setDate(holidayDate.getDate() - 1);
+    let dayAfter = new Date(holidayDate);
+    dayAfter.setDate(holidayDate.getDate() + 1);
+
+    // Check if the user has enough leave days and if the days are workdays (Mon-Fri)
+    if (remainingLeaveDays > 0 && dayBefore.getDay() >= 1 && dayBefore.getDay() <= 5) {
+      optimizedLeave.push(dayBefore.toDateString());
+      remainingLeaveDays--;
+    }
+    if (remainingLeaveDays > 0 && dayAfter.getDay() >= 1 && dayAfter.getDay() <= 5) {
+      optimizedLeave.push(dayAfter.toDateString());
+      remainingLeaveDays--;
+    }
+  });
+
+  return optimizedLeave;
+}
+
+function displaySuggestions(leaveDays) {
+  const suggestionsDiv = document.getElementById('suggestions');
+  suggestionsDiv.innerHTML = '';
+
+  if (leaveDays.length === 0) {
+    suggestionsDiv.innerHTML = '<p>No optimized leave days found.</p>';
+  } else {
+    const list = document.createElement('ul');
+    leaveDays.forEach(day => {
+      const listItem = document.createElement('li');
+      listItem.textContent = day;
+      list.appendChild(listItem);
     });
-
-    return leaveSuggestions;
+    suggestionsDiv.appendChild(list);
+  }
 }
 
-// Display leave suggestions
-function displayLeaveSuggestions(leaveSuggestions) {
-    const suggestionsDiv = document.getElementById('suggestions');
-    suggestionsDiv.innerHTML = '<h3>Leave Suggestions:</h3>';
-
-    leaveSuggestions.forEach(suggestion => {
-        suggestionsDiv.innerHTML += `<p>Take leave on ${suggestion.leaveDay.toDateString()} to ${suggestion.reason}</p>`;
-    });
-}
-
-// Initialize FullCalendar and mark leave suggestions
-function initializeCalendar(leaveSuggestions) {
+// Initialize FullCalendar and render leave days and public holidays as events
+function renderCalendar(leaveDays, holidays) {
     const calendarEl = document.getElementById('calendar');
     
-    // Prepare events for FullCalendar (leave days)
-    const events = leaveSuggestions.map(suggestion => ({
-        title: suggestion.reason,
-        start: suggestion.leaveDay.toISOString().split('T')[0],  // Format date to YYYY-MM-DD
-        allDay: true
+    // Prepare events for leave days
+    const leaveEvents = leaveDays.map(day => ({
+      title: 'Leave Day',
+      start: new Date(day),  // Add leave day as event
+      backgroundColor: '#28a745',  // Optional: green color for leave days
+      borderColor: '#28a745',
     }));
-    
-    // Initialize FullCalendar with events
+  
+    // Prepare events for public holidays
+    const holidayEvents = holidays.map(holiday => ({
+      title: holiday.localName,  // Use holiday name as the title
+      start: holiday.date,       // Use the holiday date
+      backgroundColor: '#dc3545',  // Optional: red color for public holidays
+      borderColor: '#dc3545',
+    }));
+  
+    // Combine both events
+    const allEvents = [...leaveEvents, ...holidayEvents];
+  
     const calendar = new FullCalendar.Calendar(calendarEl, {
-        initialView: 'dayGridMonth',
-        events: events
+      initialView: 'dayGridMonth',
+      events: allEvents,  // Add all events (leave days and public holidays)
     });
-    
+  
     calendar.render();
-}
-
-// Event listener for the optimize button
-document.getElementById('optimize-btn').addEventListener('click', async () => {
-    const selectedCountry = document.getElementById('country').value;
+  }
+  
+  // Event listener for the Optimize Leave Days button
+  document.getElementById('optimize-btn').addEventListener('click', async (event) => {
+    event.preventDefault();
+  
+    const countryCode = document.getElementById('countryCode').value;
     const year = document.getElementById('year').value;
-    const leaveDays = parseInt(document.getElementById('leave-days').value);
-
-    // Fetch holidays and suggest leave days
-    const holidays = await fetchHolidaysNager(selectedCountry, year);
-    if (holidays.length === 0) {
-        alert('No holidays found for this country or year.');
-        return;
-    }
-
-    const leaveSuggestions = suggestLeaveDaysWithInput(holidays, leaveDays);
-
-    // Display suggestions
-    displayLeaveSuggestions(leaveSuggestions);
-
-    // Initialize the calendar with leave suggestions
-    initializeCalendar(leaveSuggestions);
-});
+    const leaveDays = parseInt(document.getElementById('leave-days').value, 10);
+  
+    // Fetch holidays
+    const holidays = await fetchHolidays(countryCode, year);
+  
+    // Optimize leave days based on holidays
+    const optimizedLeave = optimizeLeaveDays(holidays, leaveDays);
+  
+    // Display optimized leave suggestions
+    displaySuggestions(optimizedLeave);
+  
+    // Render calendar with optimized leave days and public holidays
+    renderCalendar(optimizedLeave, holidays);
+  });
+  
